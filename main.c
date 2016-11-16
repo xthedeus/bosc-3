@@ -20,7 +20,6 @@ const char *pageAlgo;
 int bits = 0;
 int frame = 0;
 int currentFifoFrame = 0;
-int lastPage = 0;
 
 void random_algorithm(struct page_table *pt, int page);
 void fifo_algorithm(struct page_table *pt, int page);
@@ -88,21 +87,28 @@ void fifo_algorithm(struct page_table *pt, int page) {
 	int existingPageFrame = 0;
 	page_table_get_entry(pt, page, &frame, &bits);
 	int numberOfFrames = page_table_get_nframes(pt);
-	if((currentFifoFrame % numberOfFrames) == 0 && currentFifoFrame > 0) {
-		page_table_get_entry(pt, (currentFifoFrame-numberOfFrames), &existingPageFrame, &existingPageBits);
+	if((currentFifoFrame % numberOfFrames) == 0) {
+		int pageToExchange = currentFifoFrame-numberOfFrames;
+		if(pageToExchange < 0) {
+			pageToExchange = 0;
+		}
+		printf("\npageToExchange:%d\n", page);
+		printf("\ncurrentFifoFrame:%d\n", currentFifoFrame);
+		page_table_get_entry(pt, pageToExchange, &existingPageFrame, &existingPageBits);
 		switch(existingPageBits) {
 			case 1:
 				page_table_set_entry(pt,page,0,PROT_READ);
-				page_table_set_entry(pt,(currentFifoFrame-numberOfFrames),0,0);
+				page_table_set_entry(pt,pageToExchange,0,0);
 				disk_read(disk, page, &page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
 				break;
 			case 3:
-				disk_write(disk,(currentFifoFrame-numberOfFrames),&page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
+				disk_write(disk,pageToExchange,&page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
 				disk_read(disk,page,&page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
 				page_table_set_entry(pt,page,0,PROT_READ);
-				page_table_set_entry(pt,(currentFifoFrame-numberOfFrames),0,0);
+				page_table_set_entry(pt,pageToExchange,0,0);
 				break;
 		}
+		currentFifoFrame += 1;
 	} else {
 		switch(bits) {
 		case 0:
@@ -131,16 +137,13 @@ void fifo_algorithm(struct page_table *pt, int page) {
 						break;
 				}
 			}
+			currentFifoFrame += 1;
 			break;
 		case 1:
 			page_table_set_entry(pt,page,frame,PROT_READ|PROT_WRITE);
 			break;
 		}
 	}
-	if(currentFifoFrame == page && page != lastPage) {
-		currentFifoFrame += 1;
-	}
-	lastPage = page;
 }
 
 int main( int argc, char *argv[] )
