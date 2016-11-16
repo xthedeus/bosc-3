@@ -20,111 +20,16 @@ const char *pageAlgo;
 int bits = 0;
 int frame = 0;
 int currentFifoFrame = 0;
-int last = 0;
+
+void random_algorithm(struct page_table *pt, int page);
+void fifo_algorithm(struct page_table *pt, int page);
+
 void page_fault_handler( struct page_table *pt, int page )
 {
-	int bitMax = 0;
-	int bitMaxPage = 0;
-	int bitsSwtich = 0;
-	int frameSwtich = 0;
-	int existingPageBits = 0;
-	int existingPageFrame = 0;
 	if(!strcmp(pageAlgo,"rand")) {
-
-		int randomTargetFrame = lrand48() % page_table_get_nframes(pt); // get random number target
-		page_table_get_entry(pt, page, &frame, &bits);
-
-		
-		switch(bits) {
-			case 0:
-				for(int i = 0; i < page_table_get_npages(pt); i++) {
-					page_table_get_entry(pt, i, &frameSwtich, &bitsSwtich);
-					if(bits > 0) {
-						bitMax = bitsSwtich;
-						bitMaxPage = i;
-					}
-				}
-				switch(bitMax) {
-					
-					case 0:
-						page_table_set_entry(pt,page,randomTargetFrame,PROT_READ);
-						disk_read(disk, page, &page_table_get_physmem(pt)[randomTargetFrame*disk_nblocks(disk)]);
-						break;
-					case 1:
-						page_table_set_entry(pt,page,randomTargetFrame,PROT_READ);
-						page_table_set_entry(pt,bitMaxPage,0,0);
-						disk_read(disk, page, &page_table_get_physmem(pt)[randomTargetFrame*disk_nblocks(disk)]);
-						break;
-					case 3:
-						disk_write(disk,bitMaxPage,&page_table_get_physmem(pt)[randomTargetFrame*disk_nblocks(disk)]);
-						disk_read(disk,page,&page_table_get_physmem(pt)[randomTargetFrame*disk_nblocks(disk)]);
-						page_table_set_entry(pt,page,randomTargetFrame,PROT_READ);
-						page_table_set_entry(pt,bitMaxPage,0,0);
-						break;
-				}
-				break;
-			case 1:
-				page_table_set_entry(pt,page,frame,PROT_READ|PROT_WRITE);
-				break;
-		}
+		random_algorithm(pt,page);
 	} else if(!strcmp(pageAlgo,"fifo")) {
-		page_table_get_entry(pt, page, &frame, &bits);
-		int numberOfFrames = page_table_get_nframes(pt);
-		printf("\n last page: %d\n", last);
-		if((currentFifoFrame % numberOfFrames) == 0 && currentFifoFrame > 0 && last != page) {
-			printf("last");
-			page_table_get_entry(pt, (currentFifoFrame-numberOfFrames), &existingPageFrame, &existingPageBits);
-			switch(existingPageBits) {
-				case 1:
-					page_table_set_entry(pt,page,0,PROT_READ);
-					page_table_set_entry(pt,(currentFifoFrame-numberOfFrames),0,0);
-					disk_read(disk, page, &page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
-					currentFifoFrame += 1;
-					break;
-				case 3:
-					disk_write(disk,(currentFifoFrame-numberOfFrames),&page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
-					disk_read(disk,page,&page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
-					page_table_set_entry(pt,page,0,PROT_READ);
-					page_table_set_entry(pt,(currentFifoFrame-numberOfFrames),0,0);
-					currentFifoFrame += 1;
-					break;
-			}
-		} else {
-			switch(bits) {
-			case 0:
-				if(currentFifoFrame < numberOfFrames) {
-					page_table_set_entry(pt,page,(currentFifoFrame % numberOfFrames),PROT_READ);
-					disk_read(disk, page, &page_table_get_physmem(pt)[(currentFifoFrame % numberOfFrames)*disk_nblocks(disk)]);
-				} else {
-					int existingPage = (currentFifoFrame % numberOfFrames);
-					page_table_get_entry(pt, existingPage, &existingPageFrame, &existingPageBits);
-
-					switch(existingPageBits) {
-						case 0:
-							page_table_set_entry(pt,page,existingPage,PROT_READ);
-							disk_read(disk, page, &page_table_get_physmem(pt)[existingPage*disk_nblocks(disk)]);
-							break;
-						case 1:
-							page_table_set_entry(pt,page,existingPage,PROT_READ);
-							page_table_set_entry(pt,bitMaxPage,0,0);
-							disk_read(disk, page, &page_table_get_physmem(pt)[existingPage*disk_nblocks(disk)]);
-							break;
-						case 3:
-							disk_write(disk,bitMaxPage,&page_table_get_physmem(pt)[existingPage*disk_nblocks(disk)]);
-							disk_read(disk,page,&page_table_get_physmem(pt)[existingPage*disk_nblocks(disk)]);
-							page_table_set_entry(pt,page,existingPage,PROT_READ);
-							page_table_set_entry(pt,bitMaxPage,0,0);
-							break;
-					}
-				}
-				currentFifoFrame += 1;
-				break;
-			case 1:
-				page_table_set_entry(pt,page,frame,PROT_READ|PROT_WRITE);
-				break;
-			}
-		}
-		last = page;
+		fifo_algorithm(pt,page);
 	} else {
 		printf("Algorithm not found\n");
 		exit(1);
@@ -132,6 +37,108 @@ void page_fault_handler( struct page_table *pt, int page )
 	page_table_print_entry(pt,page);
 	//printf("page fault on page #%d\n",page);
 	//exit(1);
+}
+
+void random_algorithm(struct page_table *pt, int page) {
+	int bitMax = 0;
+	int bitMaxPage = 0;
+	int bitsSwitch = 0;
+	int frameSwitch = 0;
+	int randomTargetFrame = lrand48() % page_table_get_nframes(pt); // get random number target
+	page_table_get_entry(pt, page, &frame, &bits);
+
+	switch(bits) {
+		case 0:
+			for(int i = 0; i < page_table_get_npages(pt); i++) {
+				page_table_get_entry(pt, i, &frameSwitch, &bitsSwitch);
+				if(bits > 0) {
+					bitMax = bitsSwitch;
+					bitMaxPage = i;
+				}
+			}
+			switch(bitMax) {
+				
+				case 0:
+					page_table_set_entry(pt,page,randomTargetFrame,PROT_READ);
+					disk_read(disk, page, &page_table_get_physmem(pt)[randomTargetFrame*disk_nblocks(disk)]);
+					break;
+				case 1:
+					page_table_set_entry(pt,page,randomTargetFrame,PROT_READ);
+					page_table_set_entry(pt,bitMaxPage,0,0);
+					disk_read(disk, page, &page_table_get_physmem(pt)[randomTargetFrame*disk_nblocks(disk)]);
+					break;
+				case 3:
+					disk_write(disk,bitMaxPage,&page_table_get_physmem(pt)[randomTargetFrame*disk_nblocks(disk)]);
+					disk_read(disk,page,&page_table_get_physmem(pt)[randomTargetFrame*disk_nblocks(disk)]);
+					page_table_set_entry(pt,page,randomTargetFrame,PROT_READ);
+					page_table_set_entry(pt,bitMaxPage,0,0);
+					break;
+			}
+			break;
+		case 1:
+			page_table_set_entry(pt,page,frame,PROT_READ|PROT_WRITE);
+			break;
+	}
+}
+
+void fifo_algorithm(struct page_table *pt, int page) {
+	int bitMaxPage = 0;
+	int existingPageBits = 0;
+	int existingPageFrame = 0;
+	page_table_get_entry(pt, page, &frame, &bits);
+	int numberOfFrames = page_table_get_nframes(pt);
+	if((currentFifoFrame % numberOfFrames) == 0 && currentFifoFrame > 0) {
+		page_table_get_entry(pt, (currentFifoFrame-numberOfFrames), &existingPageFrame, &existingPageBits);
+		switch(existingPageBits) {
+			case 1:
+				page_table_set_entry(pt,page,0,PROT_READ);
+				page_table_set_entry(pt,(currentFifoFrame-numberOfFrames),0,0);
+				disk_read(disk, page, &page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
+				currentFifoFrame += 1;
+				break;
+			case 3:
+				disk_write(disk,(currentFifoFrame-numberOfFrames),&page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
+				disk_read(disk,page,&page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
+				page_table_set_entry(pt,page,0,PROT_READ);
+				page_table_set_entry(pt,(currentFifoFrame-numberOfFrames),0,0);
+				currentFifoFrame += 1;
+				break;
+		}
+	} else {
+		switch(bits) {
+		case 0:
+			if(currentFifoFrame < numberOfFrames) {
+				page_table_set_entry(pt,page,(currentFifoFrame % numberOfFrames),PROT_READ);
+				disk_read(disk, page, &page_table_get_physmem(pt)[(currentFifoFrame % numberOfFrames)*disk_nblocks(disk)]);
+			} else {
+				int existingPage = (currentFifoFrame % numberOfFrames);
+				page_table_get_entry(pt, existingPage, &existingPageFrame, &existingPageBits);
+
+				switch(existingPageBits) {
+					case 0:
+						page_table_set_entry(pt,page,existingPage,PROT_READ);
+						disk_read(disk, page, &page_table_get_physmem(pt)[existingPage*disk_nblocks(disk)]);
+						break;
+					case 1:
+						page_table_set_entry(pt,page,existingPage,PROT_READ);
+						page_table_set_entry(pt,bitMaxPage,0,0);
+						disk_read(disk, page, &page_table_get_physmem(pt)[existingPage*disk_nblocks(disk)]);
+						break;
+					case 3:
+						disk_write(disk,bitMaxPage,&page_table_get_physmem(pt)[existingPage*disk_nblocks(disk)]);
+						disk_read(disk,page,&page_table_get_physmem(pt)[existingPage*disk_nblocks(disk)]);
+						page_table_set_entry(pt,page,existingPage,PROT_READ);
+						page_table_set_entry(pt,bitMaxPage,0,0);
+						break;
+				}
+			}
+			currentFifoFrame += 1;
+			break;
+		case 1:
+			page_table_set_entry(pt,page,frame,PROT_READ|PROT_WRITE);
+			break;
+		}
+	}
 }
 
 int main( int argc, char *argv[] )
