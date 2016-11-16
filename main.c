@@ -20,6 +20,7 @@ const char *pageAlgo;
 int bits = 0;
 int frame = 0;
 int currentFifoFrame = 0;
+int lastPage = 0;
 
 void random_algorithm(struct page_table *pt, int page);
 void fifo_algorithm(struct page_table *pt, int page);
@@ -94,14 +95,12 @@ void fifo_algorithm(struct page_table *pt, int page) {
 				page_table_set_entry(pt,page,0,PROT_READ);
 				page_table_set_entry(pt,(currentFifoFrame-numberOfFrames),0,0);
 				disk_read(disk, page, &page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
-				currentFifoFrame += 1;
 				break;
 			case 3:
 				disk_write(disk,(currentFifoFrame-numberOfFrames),&page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
 				disk_read(disk,page,&page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
 				page_table_set_entry(pt,page,0,PROT_READ);
 				page_table_set_entry(pt,(currentFifoFrame-numberOfFrames),0,0);
-				currentFifoFrame += 1;
 				break;
 		}
 	} else {
@@ -132,13 +131,16 @@ void fifo_algorithm(struct page_table *pt, int page) {
 						break;
 				}
 			}
-			currentFifoFrame += 1;
 			break;
 		case 1:
 			page_table_set_entry(pt,page,frame,PROT_READ|PROT_WRITE);
 			break;
 		}
 	}
+	if(currentFifoFrame == page && page != lastPage) {
+		currentFifoFrame += 1;
+	}
+	lastPage = page;
 }
 
 int main( int argc, char *argv[] )
