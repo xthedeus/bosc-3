@@ -17,12 +17,46 @@ how to use the page table and disk interfaces.
 
 struct disk *disk;
 const char *pageAlgo;
-int bits = 0;
-int frame = 0;
-int currentFifoFrame = 0;
+int *framePagePointer;
+int diskWriteCounter = 0;
+int diskReadCounter = 0;
+int fifoFrameCounter = 0;
 
 void random_algorithm(struct page_table *pt, int page);
 void fifo_algorithm(struct page_table *pt, int page);
+
+void frame_assigner(struct page_table *pt, int page, int frame) {
+	int existingFrame = 0;
+	int bits = 0;
+	page_table_get_entry(pt, page, &existingFrame, &bits);
+	char *physmem = page_table_get_physmem(pt);
+
+	switch((int)bits) {
+		case 0: {
+			int existingPage = framePagePointer[frame];
+			if(existingPage != -1) { //if -1 the page has not been loaded yet
+				int phyFrame = 0;
+				int virBits = 0;
+				page_table_get_entry(pt, existingPage, &phyFrame, &virBits); //gets frame and bits of the page in memory
+				if(virBits == (PROT_READ|PROT_WRITE)) { //checks if the page has the write flag meaning we need to write to disk before exchanging the page of the frame
+					diskWriteCounter++; //increase write counter
+					disk_write(disk, existingPage, &physmem[frame*PAGE_SIZE]); //write data to disk
+				}				
+				page_table_set_entry(pt, existingPage, 0, 0); //updates the page table and make the new assigned page have no rights (read/write)
+			}
+			//assign the memory frame to the new page
+			framePagePointer[frame] = page; //updates framePagePointer
+			diskReadCounter++; //increase read counter
+			disk_read(disk, page, &physmem[frame*PAGE_SIZE]); //reads data from disk to memory frame
+			page_table_set_entry(pt,page,frame,PROT_READ); //updates page table
+			break;
+		}
+		case PROT_READ: { // page already has its data in memory and is requesting to write
+			page_table_set_entry(pt, page, existingFrame, PROT_READ|PROT_WRITE);
+			break;
+		}
+	}
+}
 
 void page_fault_handler( struct page_table *pt, int page )
 {
@@ -40,110 +74,22 @@ void page_fault_handler( struct page_table *pt, int page )
 }
 
 void random_algorithm(struct page_table *pt, int page) {
-	int bitMax = 0;
-	int bitMaxPage = 0;
-	int bitsSwitch = 0;
-	int frameSwitch = 0;
-	int randomTargetFrame = lrand48() % page_table_get_nframes(pt); // get random number target
-	page_table_get_entry(pt, page, &frame, &bits);
-
-	switch(bits) {
-		case 0:
-			for(int i = 0; i < page_table_get_npages(pt); i++) {
-				page_table_get_entry(pt, i, &frameSwitch, &bitsSwitch);
-				if(bits > 0) {
-					bitMax = bitsSwitch;
-					bitMaxPage = i;
-				}
-			}
-			switch(bitMax) {
-				
-				case 0:
-					page_table_set_entry(pt,page,randomTargetFrame,PROT_READ);
-					disk_read(disk, page, &page_table_get_physmem(pt)[randomTargetFrame*disk_nblocks(disk)]);
-					break;
-				case 1:
-					page_table_set_entry(pt,page,randomTargetFrame,PROT_READ);
-					page_table_set_entry(pt,bitMaxPage,0,0);
-					disk_read(disk, page, &page_table_get_physmem(pt)[randomTargetFrame*disk_nblocks(disk)]);
-					break;
-				case 3:
-					disk_write(disk,bitMaxPage,&page_table_get_physmem(pt)[randomTargetFrame*disk_nblocks(disk)]);
-					disk_read(disk,page,&page_table_get_physmem(pt)[randomTargetFrame*disk_nblocks(disk)]);
-					page_table_set_entry(pt,page,randomTargetFrame,PROT_READ);
-					page_table_set_entry(pt,bitMaxPage,0,0);
-					break;
-			}
-			break;
-		case 1:
-			page_table_set_entry(pt,page,frame,PROT_READ|PROT_WRITE);
-			break;
-	}
+	int randomTargetFrame = lrand48() % page_table_get_nframes(pt); //gets a random frame
+	frame_assigner(pt, page, randomTargetFrame);
 }
 
 void fifo_algorithm(struct page_table *pt, int page) {
-	int bitMaxPage = 0;
-	int existingPageBits = 0;
-	int existingPageFrame = 0;
-	page_table_get_entry(pt, page, &frame, &bits);
 	int numberOfFrames = page_table_get_nframes(pt);
-	if((currentFifoFrame % numberOfFrames) == 0) {
-		int pageToExchange = currentFifoFrame-numberOfFrames;
-		if(pageToExchange < 0) {
-			pageToExchange = 0;
-		}
-		printf("\npageToExchange:%d\n", page);
-		printf("\ncurrentFifoFrame:%d\n", currentFifoFrame);
-		page_table_get_entry(pt, pageToExchange, &existingPageFrame, &existingPageBits);
-		switch(existingPageBits) {
-			case 1:
-				page_table_set_entry(pt,page,0,PROT_READ);
-				page_table_set_entry(pt,pageToExchange,0,0);
-				disk_read(disk, page, &page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
-				break;
-			case 3:
-				disk_write(disk,pageToExchange,&page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
-				disk_read(disk,page,&page_table_get_physmem(pt)[0*disk_nblocks(disk)]);
-				page_table_set_entry(pt,page,0,PROT_READ);
-				page_table_set_entry(pt,pageToExchange,0,0);
-				break;
-		}
-		currentFifoFrame += 1;
+	int targetFrame = fifoFrameCounter; 
+	if(targetFrame >= numberOfFrames) { // check if we have reached the end of the physical memory and therefore need to go back to the first frame
+		// if reached the end of the physical memory then reset
+		targetFrame = 0;
+		fifoFrameCounter = 0;
 	} else {
-		switch(bits) {
-		case 0:
-			if(currentFifoFrame < numberOfFrames) {
-				page_table_set_entry(pt,page,(currentFifoFrame % numberOfFrames),PROT_READ);
-				disk_read(disk, page, &page_table_get_physmem(pt)[(currentFifoFrame % numberOfFrames)*disk_nblocks(disk)]);
-			} else {
-				int existingPage = (currentFifoFrame % numberOfFrames);
-				page_table_get_entry(pt, existingPage, &existingPageFrame, &existingPageBits);
-
-				switch(existingPageBits) {
-					case 0:
-						page_table_set_entry(pt,page,existingPage,PROT_READ);
-						disk_read(disk, page, &page_table_get_physmem(pt)[existingPage*disk_nblocks(disk)]);
-						break;
-					case 1:
-						page_table_set_entry(pt,page,existingPage,PROT_READ);
-						page_table_set_entry(pt,bitMaxPage,0,0);
-						disk_read(disk, page, &page_table_get_physmem(pt)[existingPage*disk_nblocks(disk)]);
-						break;
-					case 3:
-						disk_write(disk,bitMaxPage,&page_table_get_physmem(pt)[existingPage*disk_nblocks(disk)]);
-						disk_read(disk,page,&page_table_get_physmem(pt)[existingPage*disk_nblocks(disk)]);
-						page_table_set_entry(pt,page,existingPage,PROT_READ);
-						page_table_set_entry(pt,bitMaxPage,0,0);
-						break;
-				}
-			}
-			currentFifoFrame += 1;
-			break;
-		case 1:
-			page_table_set_entry(pt,page,frame,PROT_READ|PROT_WRITE);
-			break;
-		}
+		// increase the physical frame counter
+		fifoFrameCounter++;
 	}
+	frame_assigner(pt, page, targetFrame);
 }
 
 int main( int argc, char *argv[] )
@@ -157,6 +103,13 @@ int main( int argc, char *argv[] )
 	int nframes = atoi(argv[2]);
 	pageAlgo = argv[3];
 	const char *program = argv[4];
+	framePagePointer = malloc(sizeof(int) * nframes);
+
+	// initialize all values to -1 of the framePagePointer array
+	int i;
+	for(i = 0; i < nframes; i++) {
+		framePagePointer[i] = -1;
+	}
 
 	disk = disk_open("myvirtualdisk",npages);
 	if(!disk) {
