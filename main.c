@@ -25,6 +25,22 @@ int fifoFrameCounter = 0;
 
 void random_algorithm(struct page_table *pt, int page);
 void fifo_algorithm(struct page_table *pt, int page);
+void custom_algorithm(struct page_table *pt, int page);
+int get_fifo_frame();
+
+int get_fifo_frame(struct page_table *pt){
+	int numberOfFrames = page_table_get_nframes(pt);
+	int targetFrame = fifoFrameCounter;
+	if(targetFrame >= numberOfFrames) { // check if we have reached the end of the physical memory and therefore need to go back to the first frame
+		// if reached the end of the physical memory then reset
+		targetFrame = 0;
+		fifoFrameCounter = 0;
+	} else {
+		// increase the physical frame counter
+		fifoFrameCounter++;
+	}
+	return targetFrame;
+}
 
 void frame_assigner(struct page_table *pt, int page, int frame) {
 	int existingFrame = 0;
@@ -63,9 +79,11 @@ void page_fault_handler( struct page_table *pt, int page )
 {
 	pageFaultCounter++;
 	if(!strcmp(pageAlgo,"rand")) {
-		random_algorithm(pt,page);
+		random_algorithm(pt, page);
 	} else if(!strcmp(pageAlgo,"fifo")) {
-		fifo_algorithm(pt,page);
+		fifo_algorithm(pt, page);
+	} else if(!strcmp(pageAlgo,"custom")) {
+		custom_algorithm(pt, page);
 	} else {
 		printf("Algorithm not found\n");
 		exit(1);
@@ -81,15 +99,26 @@ void random_algorithm(struct page_table *pt, int page) {
 }
 
 void fifo_algorithm(struct page_table *pt, int page) {
-	int numberOfFrames = page_table_get_nframes(pt);
-	int targetFrame = fifoFrameCounter; 
-	if(targetFrame >= numberOfFrames) { // check if we have reached the end of the physical memory and therefore need to go back to the first frame
-		// if reached the end of the physical memory then reset
-		targetFrame = 0;
-		fifoFrameCounter = 0;
-	} else {
-		// increase the physical frame counter
-		fifoFrameCounter++;
+	int targetFrame = get_fifo_frame(pt);
+	frame_assigner(pt, page, targetFrame);
+}
+
+void custom_algorithm(struct page_table *pt, int page) {
+	int targetFrame = get_fifo_frame(pt);
+	int existingFrame = 0;
+	int bits = 0;
+	page_table_get_entry(pt, page, &existingFrame, &bits);
+
+	if((int)bits == 0 || (int)bits == PROT_READ) {
+		int existingPage = framePagePointer[targetFrame];
+		if(existingPage != -1) { //if -1 the page has not been loaded yet
+			int phyFrame = 0;
+			int virBits = 0;
+			page_table_get_entry(pt, existingPage, &phyFrame, &virBits); //gets frame and bits of the page in memory
+			if(virBits == (PROT_READ|PROT_WRITE)) { //checks if the page has the write flag meaning we need to write to disk before exchanging the page of the frame
+				targetFrame = get_fifo_frame(pt);
+			}	
+		}
 	}
 	frame_assigner(pt, page, targetFrame);
 }
@@ -147,7 +176,7 @@ int main( int argc, char *argv[] )
 	page_table_delete(pt);
 	disk_close(disk);
 
-	printf("Number of page faults: %d\nNumber of disk reads: %d\nNumber of page writes: %d\n", pageFaultCounter, diskReadCounter, diskWriteCounter);
+	printf("Number of page faults: %d\nNumber of disk reads: %d\nNumber of disk writes: %d\n", pageFaultCounter, diskReadCounter, diskWriteCounter);
 
 	return 0;
 }
