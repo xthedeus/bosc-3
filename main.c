@@ -20,6 +20,7 @@ const char *pageAlgo;
 int *framePagePointer;
 int diskWriteCounter = 0;
 int diskReadCounter = 0;
+int pageFaultCounter = 0;
 int fifoFrameCounter = 0;
 
 void random_algorithm(struct page_table *pt, int page);
@@ -60,6 +61,7 @@ void frame_assigner(struct page_table *pt, int page, int frame) {
 
 void page_fault_handler( struct page_table *pt, int page )
 {
+	pageFaultCounter++;
 	if(!strcmp(pageAlgo,"rand")) {
 		random_algorithm(pt,page);
 	} else if(!strcmp(pageAlgo,"fifo")) {
@@ -144,6 +146,8 @@ int main( int argc, char *argv[] )
 
 	page_table_delete(pt);
 	disk_close(disk);
+
+	printf("Number of page faults: %d\nNumber of disk reads: %d\nNumber of page writes: %d\n", pageFaultCounter, diskReadCounter, diskWriteCounter);
 
 	return 0;
 }
